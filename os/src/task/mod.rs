@@ -54,6 +54,7 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            sys_record: [0u32;500],
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
@@ -135,6 +136,14 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+    fn sys_record(&self,call_id:usize) -> [u32; 500] {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        if call_id == 999{return inner.tasks[current].sys_record}//我设立的特殊id
+        inner.tasks[current].sys_record[call_id] += 1;
+        inner.tasks[current].sys_record
+    }
+
 }
 
 /// Run the first task in task list.
@@ -168,4 +177,8 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+///Record the system call's times
+pub fn syscall_record(id:usize)-> [u32; 500] {
+    TASK_MANAGER.sys_record(id)
 }
