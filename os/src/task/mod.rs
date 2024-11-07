@@ -23,6 +23,7 @@ use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
+use crate::config::MAX_SYSCALL_NUM;
 
 /// The task manager, where all the tasks are managed.
 ///
@@ -37,17 +38,25 @@ pub struct TaskManager {
     /// total number of tasks
     num_app: usize,
     /// use inner value to get mutable access
-    inner: UPSafeCell<TaskManagerInner>,
+    pub inner: UPSafeCell<TaskManagerInner>,
 }
-
 /// The task manager inner in 'UPSafeCell'
-struct TaskManagerInner {
+pub struct TaskManagerInner {
     /// task list
-    tasks: Vec<TaskControlBlock>,
+    pub tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
-    current_task: usize,
+    pub current_task: usize,
 }
-
+///Task info
+#[allow(dead_code)]
+pub struct TaskInfo {
+    /// Task status in it's life cycle
+    pub status: TaskStatus,
+    /// The numbers of syscall called by task
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    /// Total running time of task
+    pub time: usize,
+}
 lazy_static! {
     /// a `TaskManager` global instance through lazy_static!
     pub static ref TASK_MANAGER: TaskManager = {
@@ -153,6 +162,33 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+    ///update the sys_call
+    fn task_info_update(&self,id:usize){
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].sys_call[id] += 1;
+    }
+    ///get the current task
+    fn get_sys_call_times(&self) -> [u32;MAX_SYSCALL_NUM]{
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].sys_call
+    }
+    //之前写的为了单独构建一个MEMORY_CONTROLLER而构建的俩函数，这个全局量是仿照KERNEL_SPACE写的
+    // ///to malloc a space
+    // #[allow(unused)]
+    // fn malloc(&self, start:usize, len:usize, permission:MapPermission){
+    //     let mut inner = self.inner.exclusive_access();
+    //     let current = inner.current_task;
+    //     inner.tasks[current].memory_set.new_malloc(start,len,permission);
+    // }
+    // ///to free a space only when it has been malloced
+    // #[allow(unused)]
+    // fn free(&self, start:usize, len:usize) -> bool{
+    //     let mut inner = self.inner.exclusive_access();
+    //     let current = inner.current_task;
+    //     inner.tasks[current].memory_set.free(start,len)
+    // }
 }
 
 /// Run the first task in task list.
@@ -202,3 +238,23 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
 }
+///update
+pub fn syscall_update(id:usize){
+    TASK_MANAGER.task_info_update(id);
+}
+///task_info
+pub fn get_syscall_times() -> [u32;MAX_SYSCALL_NUM] {
+    TASK_MANAGER.get_sys_call_times()
+}
+
+// ///malloc
+// #[allow(unused)]
+// pub fn malloc(start:usize,len:usize,permission:MapPermission){
+//     TASK_MANAGER.malloc(start,len,permission);
+// }
+// ///free
+// #[allow(unused)]
+// pub fn free(start:usize,len:usize) -> bool {
+//     TASK_MANAGER.free(start,len)
+// }
+

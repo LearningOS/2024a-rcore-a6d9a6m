@@ -14,6 +14,7 @@ use alloc::vec::Vec;
 use core::arch::asm;
 use lazy_static::*;
 use riscv::register::satp;
+use crate::mm::memory_set::MapType::{Framed};
 
 extern "C" {
     fn stext();
@@ -32,11 +33,14 @@ lazy_static! {
     /// The kernel's initial memory mapping(kernel address space)
     pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet>> =
         Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
+
 }
 /// address space
 pub struct MemorySet {
-    page_table: PageTable,
-    areas: Vec<MapArea>,
+    ///the page table
+    pub page_table: PageTable,//虚拟页表
+    ///areas
+    pub areas: Vec<MapArea>,//属于逻辑段的虚拟地址部分
 }
 
 impl MemorySet {
@@ -77,6 +81,31 @@ impl MemorySet {
             PhysAddr::from(strampoline as usize).into(),
             PTEFlags::R | PTEFlags::X,
         );
+    }
+    ///implement of mmap
+    #[allow(unused)]
+    pub fn new_malloc(&mut self,start:usize , len:usize, permission: MapPermission) {
+
+        self.push(MapArea::new(
+            VirtAddr::from(start),
+            VirtAddr::from(start + len),
+            Framed,
+            permission,
+        ), None,
+        );
+    }
+    ///the implement of the munmap()
+    #[allow(unused)]
+    pub fn free(&mut self,start:usize , len:usize) -> bool {
+        let free_end = VirtAddr::from(start + len);
+        let free_start = VirtAddr::from(start);
+        for area in self.areas.iter_mut() {
+            if area.vpn_range.get_start() == free_start.floor() && area.vpn_range.get_end() == free_end.ceil() {
+                area.unmap(&mut self.page_table);
+                return true;
+            }
+        }
+        false
     }
     /// Without kernel stacks.
     pub fn new_kernel() -> Self {
@@ -132,7 +161,7 @@ impl MemorySet {
             None,
         );
         info!("mapping physical memory");
-        memory_set.push(
+        memory_set.push(//内核到物理内存边界
             MapArea::new(
                 (ekernel as usize).into(),
                 MEMORY_END.into(),
@@ -265,8 +294,8 @@ impl MemorySet {
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
-    vpn_range: VPNRange,
-    data_frames: BTreeMap<VirtPageNum, FrameTracker>,
+    pub(crate) vpn_range: VPNRange,
+    data_frames: BTreeMap<VirtPageNum, FrameTracker>,//这是虚拟地址与物理地址的键值对，
     map_type: MapType,
     map_perm: MapPermission,
 }
