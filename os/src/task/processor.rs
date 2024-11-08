@@ -11,6 +11,7 @@ use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
+use crate::config::MAX_SYSCALL_NUM;
 
 /// Processor management structure
 pub struct Processor {
@@ -43,6 +44,26 @@ impl Processor {
     ///Get current task in cloning semanteme
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
         self.current.as_ref().map(Arc::clone)
+    }
+    ///Update the syscall_record
+    pub fn update_sys_call(&self,id:usize){
+        let current = self.current.as_ref();
+        current.unwrap().syscall_times_update(id);
+    }
+    ///Get the syscall_times
+    pub fn syscall_times(&self) ->[u32;MAX_SYSCALL_NUM]{
+        let current = self.current.as_ref();
+        current.unwrap().syscall_times()
+    }
+    ///mmap
+    pub fn mmap(&self,start:usize,len:usize,port:usize) -> isize{
+        let current = self.current.as_ref();
+        current.unwrap().mmap(start, len, port)
+    }
+    ///mumap
+    pub fn mumap(&self,start:usize,len:usize) -> isize{
+        let current = self.current.as_ref();
+        current.unwrap().munmap(start, len)
     }
 }
 
@@ -108,4 +129,24 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+///Update the syscall_record
+pub fn update_sys_call(id:usize){
+    PROCESSOR.exclusive_access().update_sys_call(id);
+}
+
+///Get the syscall_times
+pub fn get_syscall_times() ->[u32;MAX_SYSCALL_NUM]{
+   PROCESSOR.exclusive_access().syscall_times()
+}
+
+///mmap
+pub fn mmap(start:usize,len:usize,port:usize) ->isize{
+    PROCESSOR.exclusive_access().mmap(start, len, port)
+}
+
+///mumap
+pub fn mumap(start:usize,len:usize) ->isize{
+    PROCESSOR.exclusive_access().mumap(start, len)
 }

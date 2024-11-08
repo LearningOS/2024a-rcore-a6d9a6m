@@ -82,6 +82,15 @@ impl MemorySet {
         }
         self.areas.push(map_area);
     }
+    /// Assume that no conflicts.
+    pub fn unmap(&mut self, start_va: VirtAddr, end_va: VirtAddr) {
+        for area in self.areas.iter_mut() {
+            if area.vpn_range.get_start() == start_va.floor() && area.vpn_range.get_end() == end_va.ceil() {
+                area.unmap(&mut self.page_table);
+                break;
+            }
+        }
+    }
     /// Mention that trampoline is not collected by areas.
     fn map_trampoline(&mut self) {
         self.page_table.map(

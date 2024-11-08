@@ -1,8 +1,8 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::config::{MAX_SYSCALL_NUM, PAGE_SIZE, TRAP_CONTEXT_BASE};
+use crate::mm::{MapPermission, MemorySet, PhysPageNum, VirtAddr, VirtPageNum, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
@@ -19,7 +19,6 @@ pub struct TaskControlBlock {
 
     /// Kernel stack corresponding to PID
     pub kernel_stack: KernelStack,
-
     /// Mutable
     inner: UPSafeCell<TaskControlBlockInner>,
 }
@@ -33,6 +32,16 @@ impl TaskControlBlock {
     pub fn get_user_token(&self) -> usize {
         let inner = self.inner_exclusive_access();
         inner.memory_set.token()
+    }
+    ///Update the syscall_times
+    pub fn syscall_times_update(&self , id:usize){
+        let mut inner = self.inner_exclusive_access();
+        inner.syscall_times[id] += 1;
+    }
+    ///Get the syscall_times
+    pub fn syscall_times(&self) -> [u32;MAX_SYSCALL_NUM]{
+        let inner = self.inner_exclusive_access();
+        inner.syscall_times
     }
 }
 
@@ -53,6 +62,8 @@ pub struct TaskControlBlockInner {
     /// Application address space
     pub memory_set: MemorySet,
 
+    ///syscall_record
+    pub syscall_times:[u32;MAX_SYSCALL_NUM],
     /// Parent process of the current process.
     /// Weak will not affect the reference count of the parent
     pub parent: Option<Weak<TaskControlBlock>>,
@@ -113,6 +124,7 @@ impl TaskControlBlock {
                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
                     task_status: TaskStatus::Ready,
                     memory_set,
+                    syscall_times:[0;MAX_SYSCALL_NUM],
                     parent: None,
                     children: Vec::new(),
                     exit_code: 0,
@@ -186,6 +198,7 @@ impl TaskControlBlock {
                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
                     task_status: TaskStatus::Ready,
                     memory_set,
+                    syscall_times:parent_inner.syscall_times,
                     parent: Some(Arc::downgrade(self)),
                     children: Vec::new(),
                     exit_code: 0,
@@ -235,6 +248,61 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+    ///mmap
+    pub fn mmap(&self, _start: usize, _len: usize, _port: usize) -> isize {
+        if _start & (PAGE_SIZE - 1) != 0 {
+            println!("mmap failed: start address is not page-aligned");
+            return -1;
+        }
+
+        if _port > 7usize || _port == 0 {
+            println!("mmap failed: invalid port number");
+            return -1;
+        }
+
+        let mut inner = self.inner.exclusive_access();
+        let memory_set = &mut inner.memory_set;
+
+        let start_vpn = VirtPageNum::from(VirtAddr(_start));
+        let end_vpn = VirtPageNum::from(VirtAddr(_start + _len).ceil());
+        for vpn in start_vpn.0 .. end_vpn.0 {
+            if let Some(vpn) = memory_set.translate(VirtPageNum(vpn)) {
+                if vpn.is_valid() {
+                    println!("mmap failed: address already mapped");
+                    return -1;
+                }
+            }
+        }
+
+        let permission = MapPermission::from_bits((_port as u8) << 1).unwrap() | MapPermission::U;
+        memory_set.insert_framed_area(VirtAddr(_start), VirtAddr(_start + _len), permission);
+        0
+    }
+    ///mumap
+    pub fn munmap(&self, _start: usize, _len: usize) -> isize {
+        if _start & (PAGE_SIZE - 1) != 0 {
+            println!("munmap failed: start address is not page-aligned");
+            return -1;
+        }
+
+        let mut inner = self.inner.exclusive_access();
+        let memory_set = &mut inner.memory_set;
+
+        let start_vpn = VirtPageNum::from(VirtAddr(_start));
+        let end_vpn = VirtPageNum::from(VirtAddr(_start + _len).ceil());
+        for vpn in start_vpn.0 .. end_vpn.0 {
+            if let Some(vpn) = memory_set.translate(VirtPageNum(vpn)) {
+                if !vpn.is_valid() {
+                    println!("munmap failed: address not mapped");
+                    return -1;
+                }
+            }
+        }
+
+        // unmap
+        memory_set.unmap(VirtAddr(_start), VirtAddr(_start + _len));
+        0
     }
 }
 
