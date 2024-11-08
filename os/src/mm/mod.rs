@@ -29,3 +29,15 @@ pub fn init() {
     frame_allocator::init_frame_allocator();
     KERNEL_SPACE.exclusive_access().activate();
 }
+///to get a phs_page from a virtual address
+pub fn get_page_from_vir(virt_addr: VirtAddr) -> Option<PhysAddr>{
+    let offset = virt_addr.page_offset();
+    let vpn = virt_addr.floor();
+    let ppn = PageTable::from_token(current_user_token()).translate(vpn).map(|pte|pte.ppn());
+    if let Some(ppn) = ppn {
+        Some(PhysAddr(usize::from(PhysAddr::from(ppn)) + offset))
+    } else {
+        println!("malloc failed: {:x?}", virt_addr);
+        None
+    }
+}
