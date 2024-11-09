@@ -99,15 +99,8 @@ impl Inode {
     /// Find inode under current inode by name
     pub fn find(&self, name: &str) -> Option<Arc<Inode>> {
         let fs = self.fs.lock();
-        let mut true_name = name;
-        let inner = self.inner.exclusive_access();
-        for i in 0..inner.kv.len() {
-            if inner.kv[i].0.as_str().eq(name){
-                true_name = inner.kv[i].1.as_str();
-            }
-        }
         self.read_disk_inode(|disk_inode| {
-            self.find_inode_id(true_name, disk_inode).map(|inode_id| {
+            self.find_inode_id(name, disk_inode).map(|inode_id| {
                 let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
                 Arc::new(Self::new(
                     block_id,
