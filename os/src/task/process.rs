@@ -49,6 +49,12 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    ///Allocation_mutex
+    pub allocation_mutex: Vec<Vec<bool>>,
+    ///work_mutex
+    pub work_mutex: Vec<bool>,
+    ///Need_mutex
+    pub need_mutex:Vec<Vec<bool>>,
 }
 
 impl ProcessControlBlockInner {
@@ -81,6 +87,43 @@ impl ProcessControlBlockInner {
     /// get a task with tid in this process
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+    ///mutex_upgrade
+    pub fn mutex_lock_upgrade(&mut self,mutex_id:usize,tid:usize,locked:bool){
+        while self.work_mutex.len() <= mutex_id + 1{
+            self.work_mutex.push(true);
+        }
+        self.work_mutex[mutex_id] = false;
+        while self.need_mutex.len() <= tid + 1{
+            self.need_mutex.push(Vec::new());
+            self.allocation_mutex.push(Vec::new());
+        }
+        while self.need_mutex[tid].len() <= mutex_id + 1{
+            self.need_mutex[tid].push(false);
+            self.allocation_mutex[tid].push(true);
+        }
+        if locked {
+            self.need_mutex[tid][mutex_id] = true;
+            self.allocation_mutex[tid][mutex_id] = false;
+        }else{
+            self.need_mutex[tid][mutex_id] = false;
+            self.allocation_mutex[tid][mutex_id] = true;
+        }
+
+    }
+    pub fn mutex_unlock_upgrade(&mut self,mutex_id:usize,tid:usize){
+        self.work_mutex[mutex_id] = true;
+        self.need_mutex[tid][mutex_id] = false;
+    }
+
+    pub fn get_work(&self) -> Vec<bool> {
+        return self.work_mutex.clone();
+    }
+    pub fn get_allocation(&self) -> Vec<Vec<bool>>{
+        return self.allocation_mutex.clone();
+    }
+    pub fn get_need_mutex(&self)-> Vec<Vec<bool>> {
+        self.need_mutex.clone()
     }
 }
 
@@ -119,6 +162,9 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    allocation_mutex:Vec::new(),
+                    need_mutex: Vec::new(),
+                    work_mutex:Vec::new(),
                 })
             },
         });
@@ -245,6 +291,9 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    allocation_mutex:Vec::new(),
+                    need_mutex:Vec::new(),
+                    work_mutex:Vec::new(),
                 })
             },
         });
