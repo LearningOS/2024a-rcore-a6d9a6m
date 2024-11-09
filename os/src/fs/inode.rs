@@ -4,7 +4,9 @@
 //!
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
-use super::File;
+
+use alloc::string::String;
+use super::{File};
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
@@ -124,6 +126,23 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
     }
 }
 
+///system link at
+pub fn inode_sys_linkat(_old_name: String, _new_name: String) -> isize {
+    if let Some(ans) = ROOT_INODE.sys_linkat(_old_name, _new_name) {
+        *ans
+    }else {
+        -1
+    }
+
+}
+/// system unlink at.
+pub fn inode_sys_unlinkat(_name: String) -> isize {
+    if let Some(ans) = ROOT_INODE.sys_unlinkat(_name) {
+        *ans
+    }else {
+        -1
+    }
+}
 impl File for OSInode {
     fn readable(&self) -> bool {
         self.readable

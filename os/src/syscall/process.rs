@@ -78,7 +78,18 @@ pub fn sys_exec(path: *const u8) -> isize {
         -1
     }
 }
-
+//pub fn sys_exec(path: *const u8) -> isize {
+//     trace!("kernel:pid[{}] sys_exec", current_task().unwrap().pid.0);
+//     let token = current_user_token();
+//     let path = translated_str(token, path);
+//     if let Some(data) = get_app_data_by_name(path.as_str()) {
+//         let task = current_task().unwrap();
+//         task.exec(data);
+//         0
+//     } else {
+//         -1
+//     }
+// }
 /// If there is not a child process whose pid is same as given, return -1.
 /// Else if there is a child process but it is still running, return -2.
 pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
@@ -213,13 +224,21 @@ pub fn sys_spawn(_path: *const u8) -> isize {
 
     let token = current_user_token();
     let path = translated_str(token, _path);
-    if let Some(data) = get_app_data_by_name(path.as_str()) {
-        new_task.exec(data);
-        add_task(new_task);
-        new_pid as isize
-    } else {
-        -1
+    if let Some(app_inode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+            let all_data = app_inode.read_all();
+            new_task.exec(all_data.as_slice());
+            add_task(new_task);
+            new_pid as isize
+        } else {
+            -1
     }
+    // if let Some(data) = get_app_data_by_name(path.as_str()) {
+    //     new_task.exec(data);
+    //     add_task(new_task);
+    //     new_pid as isize
+    // } else {
+    //     -1
+    // }
 }
 
 /// YOUR JOB: Set task priority.

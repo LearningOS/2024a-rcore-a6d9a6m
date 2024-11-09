@@ -5,15 +5,43 @@ use super::{
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cell::{RefCell, RefMut};
 use spin::{Mutex, MutexGuard};
+
+
+/// In order to get mutable reference of inner data, call
+/// `exclusive_access`.
+pub struct UPSafeCell<T> {
+    /// inner data
+    inner: RefCell<T>,
+}
+
+unsafe impl<T> Sync for UPSafeCell<T> {}
+
+impl<T> UPSafeCell<T> {
+    /// User is responsible to guarantee that inner struct is only used in
+    /// uniprocessor.
+    pub unsafe fn new(value: T) -> Self {
+        Self {
+            inner: RefCell::new(value),
+        }
+    }
+    /// Panic if the data has been borrowed.
+    pub fn exclusive_access(&self) -> RefMut<'_, T> {
+        self.inner.borrow_mut()
+    }
+}
 /// Virtual filesystem layer over easy-fs
 pub struct Inode {
     block_id: usize,
     block_offset: usize,
     fs: Arc<Mutex<EasyFileSystem>>,
     block_device: Arc<dyn BlockDevice>,
+    inner:UPSafeCell<InodeInner>,
 }
-
+pub struct InodeInner{
+    kv:Vec<(String,String)>
+}
 impl Inode {
     /// Create a vfs inode
     pub fn new(
@@ -22,11 +50,14 @@ impl Inode {
         fs: Arc<Mutex<EasyFileSystem>>,
         block_device: Arc<dyn BlockDevice>,
     ) -> Self {
-        Self {
-            block_id: block_id as usize,
-            block_offset,
-            fs,
-            block_device,
+        unsafe {
+            Self {
+                block_id: block_id as usize,
+                block_offset,
+                fs,
+                block_device,
+                inner: UPSafeCell::new(InodeInner { kv: Vec::new() }),
+            }
         }
     }
     /// Call a function over a disk inode to read it
@@ -45,6 +76,13 @@ impl Inode {
     fn find_inode_id(&self, name: &str, disk_inode: &DiskInode) -> Option<u32> {
         // assert it is a directory
         assert!(disk_inode.is_dir());
+        let mut true_name = name;
+        let inner = self.inner.exclusive_access();
+        for i in 0..inner.kv.len() {
+            if inner.kv[i].0.as_str().eq(name){
+                true_name = inner.kv[i].1.as_str();
+            }
+        }
         let file_count = (disk_inode.size as usize) / DIRENT_SZ;
         let mut dirent = DirEntry::empty();
         for i in 0..file_count {
@@ -52,7 +90,7 @@ impl Inode {
                 disk_inode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
                 DIRENT_SZ,
             );
-            if dirent.name() == name {
+            if dirent.name() == true_name {
                 return Some(dirent.inode_id() as u32);
             }
         }
@@ -61,8 +99,15 @@ impl Inode {
     /// Find inode under current inode by name
     pub fn find(&self, name: &str) -> Option<Arc<Inode>> {
         let fs = self.fs.lock();
+        let mut true_name = name;
+        let inner = self.inner.exclusive_access();
+        for i in 0..inner.kv.len() {
+            if inner.kv[i].0.as_str().eq(name){
+                true_name = inner.kv[i].1.as_str();
+            }
+        }
         self.read_disk_inode(|disk_inode| {
-            self.find_inode_id(name, disk_inode).map(|inode_id| {
+            self.find_inode_id(true_name, disk_inode).map(|inode_id| {
                 let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
                 Arc::new(Self::new(
                     block_id,
@@ -72,6 +117,28 @@ impl Inode {
                 ))
             })
         })
+    }
+    ///system link at
+    pub fn sys_linkat(&self, _old_name: String, _new_name: String) -> Option<Arc<isize>> {
+        let mut inner = self.inner.exclusive_access();
+        for i in 0..inner.kv.len() {
+            if inner.kv[i].0.clone().eq(&_old_name){
+                return Some(Arc::new(-1));
+            }
+        }
+        inner.kv.push((_old_name, _new_name));
+        Some(Arc::new(0))
+    }
+    /// system unlink at.
+    pub fn sys_unlinkat(&self, _name: String) -> Option<Arc<isize>> {
+        let mut inner = self.inner.exclusive_access();
+        for i in 0..inner.kv.len() {
+            if inner.kv[i].0.clone().eq(&_name){
+                inner.kv.remove(i);
+                return Some(Arc::new(0));
+            }
+        }
+        Some(Arc::new(-1))
     }
     /// Increase the size of a disk inode
     fn increase_size(
