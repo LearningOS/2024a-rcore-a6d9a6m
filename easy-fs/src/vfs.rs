@@ -1,6 +1,6 @@
 use super::{
     block_cache_sync_all, get_block_cache, BlockDevice, DirEntry, DiskInode, DiskInodeType,
-    EasyFileSystem, DIRENT_SZ,
+    EasyFileSystem, DIRENT_SZ
 };
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -37,10 +37,10 @@ pub struct Inode {
     block_offset: usize,
     fs: Arc<Mutex<EasyFileSystem>>,
     block_device: Arc<dyn BlockDevice>,
-    inner:UPSafeCell<InodeInner>,
+    inner:UPSafeCell<IodeInner>,
 }
-pub struct InodeInner{
-    kv:Vec<(String,String)>
+pub struct IodeInner{
+    nlist: usize,
 }
 impl Inode {
     /// Create a vfs inode
@@ -56,7 +56,7 @@ impl Inode {
                 block_offset,
                 fs,
                 block_device,
-                inner: UPSafeCell::new(InodeInner { kv: Vec::new() }),
+                inner:UPSafeCell::new(IodeInner { nlist: 1 }),
             }
         }
     }
@@ -76,13 +76,6 @@ impl Inode {
     fn find_inode_id(&self, name: &str, disk_inode: &DiskInode) -> Option<u32> {
         // assert it is a directory
         assert!(disk_inode.is_dir());
-        let mut true_name = name;
-        let inner = self.inner.exclusive_access();
-        for i in 0..inner.kv.len() {
-            if inner.kv[i].0.as_str().eq(name){
-                true_name = inner.kv[i].1.as_str();
-            }
-        }
         let file_count = (disk_inode.size as usize) / DIRENT_SZ;
         let mut dirent = DirEntry::empty();
         for i in 0..file_count {
@@ -90,7 +83,7 @@ impl Inode {
                 disk_inode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
                 DIRENT_SZ,
             );
-            if dirent.name() == true_name {
+            if dirent.name() == name {
                 return Some(dirent.inode_id() as u32);
             }
         }
@@ -111,27 +104,70 @@ impl Inode {
             })
         })
     }
+    ///nlist_upgrade
+    pub fn nlist_upgrade(&self){
+        let mut inner = self.inner.exclusive_access();
+        inner.nlist += 1;
+    }
+    ///nlist_upgrade
+    pub fn nlist_deupgrade(&self){
+        let mut inner = self.inner.exclusive_access();
+        inner.nlist -= 1;
+    }
+    ///get nlink
+    pub fn get_nlink(&self) -> usize{
+        let inner = self.inner.exclusive_access();
+        inner.nlist
+    }
     ///system link at
     pub fn sys_linkat(&self, _old_name: String, _new_name: String) -> Option<Arc<isize>> {
-        let mut inner = self.inner.exclusive_access();
-        for i in 0..inner.kv.len() {
-            if inner.kv[i].0.clone().eq(&_old_name){
-                return Some(Arc::new(-1));
+        self.modify_disk_inode(|root_inode| {
+            let id =self.find_inode_id(&_old_name, root_inode);
+            if let Some(the_id) = id {
+                let mut fs = self.fs.lock();
+                // append file in the dirent
+                let file_count = (root_inode.size as usize) / DIRENT_SZ;
+                let new_size = (file_count + 1) * DIRENT_SZ;
+                // increase size
+                self.increase_size(new_size as u32, root_inode, &mut fs);
+                // write dirent
+                let dirent = DirEntry::new(&_new_name, the_id);
+                root_inode.write_at(
+                    file_count * DIRENT_SZ,
+                    dirent.as_bytes(),
+                    &self.block_device,
+                );
+                self.nlist_upgrade();
+                return Some(Arc::new(0));
             }
-        }
-        inner.kv.push((_old_name, _new_name));
-        Some(Arc::new(0))
+            return Some(Arc::new(-1));
+        });
+        return Some(Arc::new(-1));
+
     }
     /// system unlink at.
     pub fn sys_unlinkat(&self, _name: String) -> Option<Arc<isize>> {
-        let mut inner = self.inner.exclusive_access();
-        for i in 0..inner.kv.len() {
-            if inner.kv[i].0.clone().eq(&_name){
-                inner.kv.remove(i);
-                return Some(Arc::new(0));
+        self.modify_disk_inode(|root_inode| {
+            // append file in the dirent
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            for i in 0..file_count {
+                let new_dirent = DirEntry::empty();
+                let mut dirent = DirEntry::empty();
+                assert_eq!(root_inode.read_at(DIRENT_SZ * i,dirent.as_bytes_mut(),&self.block_device,),DIRENT_SZ,);
+                if dirent.name() == _name {
+                    root_inode.write_at(
+                        DIRENT_SZ * i,
+                        new_dirent.as_bytes(),
+                        &self.block_device,
+                    );
+                    self.nlist_deupgrade();
+                    return Some(Arc::new(0));
+                }
             }
-        }
-        Some(Arc::new(-1))
+            return Some(Arc::new(0));
+        });
+        Some(Arc::new(0))
+
     }
     /// Increase the size of a disk inode
     fn increase_size(
@@ -242,5 +278,17 @@ impl Inode {
             }
         });
         block_cache_sync_all();
+    }
+    ///get block_offset
+    pub fn get_block_offset(&self) -> usize{
+        self.block_offset
+    }
+    ///block_id
+    pub fn get_block_id(&self)-> usize{
+        self.block_id
+    }
+    ///fs
+    pub fn get_fs(&self) -> MutexGuard<EasyFileSystem>{
+        self.fs.lock()
     }
 }
