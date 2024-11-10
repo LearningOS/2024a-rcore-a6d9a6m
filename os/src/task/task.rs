@@ -4,8 +4,7 @@ use super::id::TaskUserRes;
 use super::{kstack_alloc, KernelStack, ProcessControlBlock, TaskContext};
 use crate::trap::TrapContext;
 use crate::{mm::PhysPageNum, sync::UPSafeCell};
-use alloc::sync::{Arc, Weak};
-use alloc::vec::Vec;
+use alloc::{sync::{Arc, Weak}, vec::Vec};
 use core::cell::RefMut;
 
 /// Task control block structure
@@ -37,12 +36,12 @@ pub struct TaskControlBlockInner {
     pub trap_cx_ppn: PhysPageNum,
     /// Save task context
     pub task_cx: TaskContext,
+
     /// Maintain the execution status of the current process
     pub task_status: TaskStatus,
     /// It is set when active exit or execution error occurs
     pub exit_code: Option<i32>,
-    ///work
-    pub work_mutex:Vec<bool>,
+
     /// The number of semaphores that the thread needs
     pub need : Vec<(usize, isize)>,
     /// The number of semaphores that the thread has
@@ -57,22 +56,6 @@ impl TaskControlBlockInner {
     #[allow(unused)]
     fn get_status(&self) -> TaskStatus {
         self.task_status
-    }
-    #[allow(unused)]
-    ///mutex_upgrade
-    pub fn mutex_lock_upgrade(&mut self,mutex_id:usize){
-        while self.work_mutex.len() <= mutex_id + 1{
-            self.work_mutex.push(true);
-        }
-        self.work_mutex[mutex_id] = false;
-
-    }
-    pub fn mutex_unlock_upgrade(&mut self,mutex_id:usize){
-        self.work_mutex[mutex_id] = true;
-    }
-
-    pub fn get_work(&self) -> Vec<bool> {
-         self.work_mutex.clone()
     }
 }
 
@@ -97,9 +80,8 @@ impl TaskControlBlock {
                     task_cx: TaskContext::goto_trap_return(kstack_top),
                     task_status: TaskStatus::Ready,
                     exit_code: None,
-                    work_mutex:Vec::new(),
-                    allocation:Vec::new(),
-                    need:Vec::new(),
+                    need: Vec::new(),
+                    allocation: Vec::new(),
                 })
             },
         }

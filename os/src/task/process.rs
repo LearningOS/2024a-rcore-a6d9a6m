@@ -287,4 +287,3 @@ impl ProcessControlBlock {
         self.pid.0
     }
 }
-
